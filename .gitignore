@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+
+# Docker
+*.log
+
+# ML / CV
+*.pt
+*.onnx
+*.engine
+*.h5
+*.weights
+
+# Data
+data/
+frames/
+outputs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+videos/*
+!videos/.gitkeep
