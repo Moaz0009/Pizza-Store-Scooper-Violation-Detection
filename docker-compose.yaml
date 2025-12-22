@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    hostname: "rabbitmq"
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    networks:
+      - pizza_net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  reader:
+    build: 
+      context: ./frame_reader
+    command: python reader.py
+    environment:
+      - VIDEO_PATH=/app/videos/Two_Vio.mp4
+    volumes:
+      - ./videos/Two_Vio.mp4:/app/videos/Two_Vio.mp4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - pizza_net
+    restart: on-failure
+
+  detector:
+    build: 
+      context: ./detector
+    command: python detector.py
+    # Optional: Map model folder if you want to change weights without rebuilding
+    volumes:
+      - ./detector/model:/app/model
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    # [CRITICAL] This section enables the GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - pizza_net
+    restart: on-failure
+
+  streamer:
+    build: 
+      context: ./streamer
+    command: python streamer.py
+    ports:
+      - "5000:5000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - pizza_net
+    restart: on-failure
+
+networks:
+  pizza_net:
+    driver: bridge
