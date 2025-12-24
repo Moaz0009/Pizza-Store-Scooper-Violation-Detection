@@ -10,11 +10,9 @@ from violation_logic import ViolationTracker
 # --- CONFIGURATION ---
 MODEL_PATH = "model/yolo12m-v2.pt" 
 
-# CROP CALCULATED FROM YOUR ROI POINTSs
-# Min X=322, Max X=719 -> Crop 250 to 800
-# Min Y=112, Max Y=739 -> Crop 50 to 800
-CROP_X1, CROP_Y1 = 250, 50  
-CROP_X2, CROP_Y2 = 750, 750 
+# CROP SETTINGS
+CROP_X1, CROP_Y1 = 350, 200  
+CROP_X2, CROP_Y2 = 640, 750
 
 print(f"🚀 Initializing Detector Service...", flush=True)
 
@@ -55,7 +53,6 @@ def callback(ch, method, properties, body):
 
         # --- 1. SMART CROP ---
         h, w, _ = full_frame.shape
-        # Safety checks to ensure crop is within image
         x1 = max(0, CROP_X1)
         y1 = max(0, CROP_Y1)
         x2 = min(w, CROP_X2)
@@ -63,8 +60,7 @@ def callback(ch, method, properties, body):
         
         cropped_frame = full_frame[y1:y2, x1:x2]
 
-        # --- 2. DETECT ON CROP ---
-        # This makes small objects 2x-3x larger for the model!
+        # --- 3. DETECT ON ENHANCED CROP ---
         results = model.track(cropped_frame, persist=True, verbose=False)[0]
         
         detections = []
@@ -77,9 +73,7 @@ def callback(ch, method, properties, body):
             for box, cls, track_id in zip(boxes, classes, track_ids):
                 class_name = model.names[int(cls)] 
                 
-                # --- 3. FIX COORDINATES ---
-                # The model sees (10,10). We must add the Crop Offset (250, 50)
-                # so the box appears correctly on the full video.
+                # --- 4. FIX COORDINATES ---
                 bx1, by1, bx2, by2 = map(int, box)
                 
                 detections.append({
@@ -88,11 +82,10 @@ def callback(ch, method, properties, body):
                     "id": int(track_id)
                 })
 
-        # --- 4. LOGIC & DRAWING ---
-        # Logic works on the FULL frame, using corrected coordinates
+        # --- 5. LOGIC & DRAWING ---
         violations, annotated_frame = tracker.process(full_frame, detections)
 
-        # Optional: Draw the Blue "Focus Area" so you know what the model sees
+        # Draw Crop Box
         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 200, 0), 1)
         cv2.putText(annotated_frame, "AI FOCUS AREA", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
 
@@ -112,5 +105,5 @@ def callback(ch, method, properties, body):
         print(f"❌ Error: {e}", flush=True)
 
 channel.basic_consume(queue="frames", on_message_callback=callback, auto_ack=True)
-print("👀 Detector started with CROP FOCUS...", flush=True)
+print("👀 Detector started with ENHANCED CROP...", flush=True)
 channel.start_consuming()
