@@ -3,7 +3,11 @@ import numpy as np
 import math
 
 class ViolationTracker:
-    def __init__(self):
+    def __init__(self, roi_points):
+        """
+        Initializes the tracker with specific Region of Interest (ROI) points.
+        :param roi_points: List of tuples [(x1, y1), (x2, y2), ...] defining the polygon.
+        """
         # SYSTEM STATE
         self.state = "IDLE"
         self.verification_timer = 0
@@ -20,19 +24,14 @@ class ViolationTracker:
         
         # SETTINGS
         self.HOLDING_THRESHOLD = 30   # Pixel distance to count as "Holding"
-        self.SEPARATION_LIMIT = 30    # If separated for ~1 sec (20 frames), it's a violation
-        self.VERIFY_DURATION = 20
+        self.SEPARATION_LIMIT = 30    # If separated for ~1 sec (20-30 frames), it's a violation
+        self.VERIFY_DURATION = 10
         
-        # --- ROI ---
-        raw_roi = [(454, 388), (514, 397), (526, 351), (466, 340)]
-        OFFSET_X = 0  
-        OFFSET_Y = 0
-        
-        self.ROI = []
-        for (x, y) in raw_roi:
-            self.ROI.append((x + OFFSET_X, y + OFFSET_Y))
+        # --- ROI CONFIGURATION ---
+        # Now we use the points passed from detector.py (loaded from .env)
+        self.ROI = roi_points
 
-        print(f"✅ LOGIC STARTED. Separation Limit: {self.SEPARATION_LIMIT} frames.", flush=True)
+        print(f"✅ LOGIC STARTED. ROI Points: {len(self.ROI)}", flush=True)
 
     def get_center(self, bbox):
         return int((bbox[0] + bbox[2]) / 2), int((bbox[1] + bbox[3]) / 2)
@@ -64,8 +63,10 @@ class ViolationTracker:
     def process(self, frame, detections):
         self.frame_counter += 1
         
+        # Separate detections by class
         hands = [d for d in detections if d["class"].lower() == "hand"]
         scoopers = [d for d in detections if d["class"].lower() == "scooper"]
+        people = [d for d in detections if d["class"].lower() == "person"]
         
         # --- 1. MEMORY UPDATE (CREDIT) ---
         is_holding_global, _ = self.check_holding_scooper(hands, scoopers)
@@ -73,14 +74,21 @@ class ViolationTracker:
             self.scooper_memory = True
             self.bare_hand_timer = 0 
 
-        # --- VISUALS: SCOOPERS (Blue) ---
+        # --- VISUALS: PEOPLE (Blue) --- 
+        for person in people:
+            x1, y1, x2, y2 = person["bbox"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            label = f"Person {person.get('id', '?')}"
+            cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+        # --- VISUALS: SCOOPERS (Cyan/Yellow Text) ---
         if self.scooper_memory:
             cv2.putText(frame, "CREDIT: ACTIVE", (50, 30), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
         for scooper in scoopers:
             x1, y1, x2, y2 = scooper["bbox"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2) 
             cv2.putText(frame, "Scooper", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
         # --- VISUALS: HANDS (Red/Green) ---
