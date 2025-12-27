@@ -120,5 +120,4 @@ The system is containerized using **Docker Compose** to ensure consistency acros
 ---
 
 ## 7. Future Improvements
-* **Dynamic ROI:** Allow users to draw ROIs directly on the frontend instead of hardcoding coordinates.
 * **Alerting:** Integrate Email or SMS notifications when a violation occurs.
