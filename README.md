@@ -52,7 +52,7 @@ The system follows a **decoupled microservices architecture**:
 ## 🧭 System Diagram
 
 <p align="center">
-  <img src="assets/system-diagram.jpg" alt="Pizza Store Scooper Detection Architecture" width="850"/>
+  <img src="assests/system-diagram.jpg" alt="Pizza Store Scooper Detection Architecture" width="850"/>
 </p>
 
 <p align="center">
