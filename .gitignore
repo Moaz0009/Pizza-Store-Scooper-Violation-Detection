@@ -10,17 +10,6 @@ venv/
 # Docker
 *.log
 
-# ML / CV
-*.pt
-*.onnx
-*.engine
-*.h5
-*.weights
-
-# Data
-data/
-frames/
-outputs/
 
 # OS
 .DS_Store
