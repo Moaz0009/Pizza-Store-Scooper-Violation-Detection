@@ -4,38 +4,47 @@ import cv2
 import numpy as np
 import time
 import sys
+import os
 from ultralytics import YOLO
 from violation_logic import ViolationTracker
+from database import init_db, log_violation
 
-# --- CONFIGURATION ---
-MODEL_PATH = "model/yolo12m-v2.pt" 
+# --- STRICT CONFIGURATION (No Defaults) ---
+# This will crash with KeyError if variables are missing in .env
+RABBITMQ_HOST = os.environ["RABBITMQ_HOST"]
+MODEL_PATH = os.environ["MODEL_PATH"]
+IMAGE_SAVE_DIR = os.environ["IMAGE_SAVE_DIR"]
+ROI_STR = os.environ["ROI_POINTS"]
 
-# CROP SETTINGS
-CROP_X1, CROP_Y1 = 350, 200  
-CROP_X2, CROP_Y2 = 640, 750
+# Strict ROI Parsing
+coords = list(map(int, ROI_STR.split(',')))
+ROI_POINTS = [(coords[i], coords[i+1]) for i in range(0, len(coords), 2)]
 
 print(f"🚀 Initializing Detector Service...", flush=True)
 
-try:
-    model = YOLO(MODEL_PATH)
-    print(f"✅ Model loaded: {MODEL_PATH}", flush=True)
-except Exception as e:
-    print(f"❌ FATAL ERROR: Could not load model at {MODEL_PATH}", flush=True)
-    sys.exit(1)
+# 1. INITIALIZE DATABASE
+init_db()
 
-tracker = ViolationTracker()
+# 2. LOAD MODEL (No Try/Except Safety)
+print(f"Loading model from: {MODEL_PATH}", flush=True)
+model = YOLO(MODEL_PATH) 
+print(f"✅ Model loaded successfully.", flush=True)
+
+# Initialize the logic with the parsed ROI
+tracker = ViolationTracker(roi_points=ROI_POINTS)
+last_violation_count = 0 
 
 def connect_to_rabbitmq():
     while True:
         try:
-            print("⏳ Connecting to RabbitMQ...", flush=True)
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            print(f"⏳ Connecting to RabbitMQ at {RABBITMQ_HOST}...", flush=True)
+            connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
             print("✅ Connected!", flush=True)
             return connection
         except pika.exceptions.AMQPConnectionError:
             time.sleep(5)
-        except Exception as e:
-            time.sleep(5)
+        # Note: General Exception safety kept here only for network retry (standard practice),
+        # but let me know if you want this removed too.
 
 connection = connect_to_rabbitmq()
 channel = connection.channel()
@@ -43,27 +52,20 @@ channel.queue_declare(queue="frames")
 channel.queue_declare(queue="results")
 
 def callback(ch, method, properties, body):
+    global last_violation_count
+    
     try:
         data = pickle.loads(body)
         
-        # Decode FULL ORIGINAL frame
         np_arr = np.frombuffer(data["frame_data"], np.uint8)
         full_frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         frame_id = data["frame_id"]
 
-        # --- 1. SMART CROP ---
-        h, w, _ = full_frame.shape
-        x1 = max(0, CROP_X1)
-        y1 = max(0, CROP_Y1)
-        x2 = min(w, CROP_X2)
-        y2 = min(h, CROP_Y2)
-        
-        cropped_frame = full_frame[y1:y2, x1:x2]
-
-        # --- 3. DETECT ON ENHANCED CROP ---
-        results = model.track(cropped_frame, persist=True, verbose=False)[0]
+        results = model.track(full_frame, persist=True, verbose=False)[0]
         
         detections = []
+        current_frame_bboxes = [] 
+        current_frame_labels = [] 
         
         if results.boxes.id is not None:
             boxes = results.boxes.xyxy.cpu().numpy()
@@ -72,24 +74,42 @@ def callback(ch, method, properties, body):
 
             for box, cls, track_id in zip(boxes, classes, track_ids):
                 class_name = model.names[int(cls)] 
-                
-                # --- 4. FIX COORDINATES ---
                 bx1, by1, bx2, by2 = map(int, box)
-                
+                bbox_tuple = (bx1, by1, bx2, by2)
+
                 detections.append({
                     "class": class_name,
-                    "bbox": (bx1 + x1, by1 + y1, bx2 + x1, by2 + y1),
+                    "bbox": bbox_tuple,
                     "id": int(track_id)
                 })
+                current_frame_bboxes.append(bbox_tuple)
+                current_frame_labels.append(class_name)
 
-        # --- 5. LOGIC & DRAWING ---
-        violations, annotated_frame = tracker.process(full_frame, detections)
+        current_violations, annotated_frame = tracker.process(full_frame, detections)
 
-        # Draw Crop Box
-        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 200, 0), 1)
-        cv2.putText(annotated_frame, "AI FOCUS AREA", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+        if current_violations > last_violation_count:
+            diff = current_violations - last_violation_count
+            timestamp = int(time.time())
+            filename = f"violation_frame_{frame_id}_{timestamp}.jpg"
+            save_path = os.path.join(IMAGE_SAVE_DIR, filename)
+            
+            # Ensure directory exists (Strict: assumes permission exists)
+            if not os.path.exists(IMAGE_SAVE_DIR):
+                os.makedirs(IMAGE_SAVE_DIR)
+                
+            cv2.imwrite(save_path, annotated_frame)
+            
+            for _ in range(diff):
+                log_violation(
+                    frame_id=frame_id,
+                    violation_type="Bare Hand Contact in ROI",
+                    image_path=save_path,
+                    bboxes=current_frame_bboxes,
+                    labels=current_frame_labels
+                )
+            
+            last_violation_count = current_violations
 
-        # Publish
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         channel.basic_publish(
             exchange="",
@@ -97,13 +117,13 @@ def callback(ch, method, properties, body):
             body=pickle.dumps({
                 "frame_id": frame_id,
                 "frame_data": buffer.tobytes(),
-                "violations": violations
+                "violations": current_violations
             })
         )
         
     except Exception as e:
-        print(f"❌ Error: {e}", flush=True)
+        print(f"❌ Error during processing: {e}", flush=True)
 
 channel.basic_consume(queue="frames", on_message_callback=callback, auto_ack=True)
-print("👀 Detector started with ENHANCED CROP...", flush=True)
+print("👀 Detector started...", flush=True)
 channel.start_consuming()

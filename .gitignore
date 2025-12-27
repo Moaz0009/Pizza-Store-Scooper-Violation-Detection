@@ -25,6 +25,5 @@ outputs/
 # OS
 .DS_Store
 Thumbs.db
-
 videos/*
 !videos/.gitkeep

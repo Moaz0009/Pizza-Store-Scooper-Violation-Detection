@@ -15,14 +15,42 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres:
+    image: postgres:13
+    hostname: postgres
+    # 1. Load secrets from .env
+    env_file:
+      - .env
+    environment:
+      # We map the .env variables to what the Postgres Image expects
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pizza_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   reader:
     build: 
       context: ./frame_reader
     command: python reader.py
+    # 2. Add .env here so Python can read RABBITMQ_HOST
+    env_file:
+      - .env
     environment:
-      - VIDEO_PATH=/app/videos/Two_Vio.mp4
+      # Override the video path using the env variable
+      - VIDEO_PATH=${VIDEO_SOURCE}
     volumes:
-      - ./videos/Two_Vio.mp4:/app/videos/Two_Vio.mp4
+      # Map the local file to the path defined in .env
+      - ./videos/One_Vio_1.mp4:/app/videos/One_Vio_1.mp4
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -34,13 +62,17 @@ services:
     build: 
       context: ./detector
     command: python detector.py
-    # Optional: Map model folder if you want to change weights without rebuilding
+    # 3. Add .env here (CRITICAL: Needs keys, ROI, Model path)
+    env_file:
+      - .env
     volumes:
       - ./detector/model:/app/model
+      - ./violation_images:/app/violation_images
     depends_on:
       rabbitmq:
         condition: service_healthy
-    # [CRITICAL] This section enables the GPU
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -48,6 +80,12 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    environment:
+      # Map .env vars to container vars
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     networks:
       - pizza_net
     restart: on-failure
@@ -56,6 +94,9 @@ services:
     build: 
       context: ./streamer
     command: python streamer.py
+    # 4. Add .env here (Needs RabbitMQ Host)
+    env_file:
+      - .env
     ports:
       - "5000:5000"
     depends_on:
@@ -68,3 +109,6 @@ services:
 networks:
   pizza_net:
     driver: bridge
+
+volumes:
+  postgres_data:
