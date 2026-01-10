@@ -5,8 +5,8 @@ import time
 import os
 
 VIDEO_PATH = os.getenv("VIDEO_PATH", "video.mp4")
-
-connection = pika.BlockingConnection(pika.ConnectionParameters(host="rabbitmq"))
+RABBITMQ_HOST = os.environ["RABBITMQ_HOST"]
+connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
 channel = connection.channel()
 channel.queue_declare(queue="frames")
 
