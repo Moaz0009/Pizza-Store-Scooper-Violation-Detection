@@ -11,7 +11,7 @@ app = Flask(__name__)
 latest_frame = None
 current_violations = 0
 lock = threading.Lock()
-
+RABBITMQ_HOST = os.environ["RABBITMQ_HOST"]
 # Initial blank frame
 blank = np.zeros((480, 640, 3), np.uint8)
 cv2.putText(blank, "Waiting for stream...", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
@@ -22,7 +22,7 @@ def consume_results():
     """Reads processed frames from Detector via RabbitMQ"""
     while True:
         try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
             channel = connection.channel()
             channel.queue_declare(queue="results")
 
