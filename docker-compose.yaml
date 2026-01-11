@@ -50,7 +50,7 @@ services:
       - VIDEO_PATH=${VIDEO_SOURCE}
     volumes:
       # Map the local file to the path defined in .env
-      - ./videos/One_Vio_1.mp4:/app/videos/One_Vio_1.mp4
+      - ./videos/Two_Vio.mp4:/app/videos/Two_Vio.mp4
     depends_on:
       rabbitmq:
         condition: service_healthy
